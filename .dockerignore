@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+**/__pycache__
+**/.pytest_cache
+.env
+.env.*
+*.pem
+*.key
+local-data
+models
+checkpoints
+**/*.gguf
+**/*.safetensors
