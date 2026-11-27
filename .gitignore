@@ -21,3 +21,4 @@ models/
 checkpoints/
 local-data/
 .idea/
+.claude/settings.local.json
