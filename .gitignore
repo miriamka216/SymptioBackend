@@ -20,3 +20,4 @@ htmlcov/
 models/
 checkpoints/
 local-data/
+.idea/
