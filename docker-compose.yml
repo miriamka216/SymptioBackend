@@ -1,0 +1,147 @@
+name: evalvo-z1
+
+x-app: &app
+  build: .
+  init: true
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=35).close()"]
+    interval: 20s
+    timeout: 40s
+    retries: 5
+    start_period: 15s
+
+x-db-env: &db-env
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_PASSWORD: ${APP_DB_PASSWORD:?Copy .env.example to .env}
+
+x-broker-env: &broker-env
+  BROKER_HOST: rabbitmq
+  BROKER_PORT: "5672"
+  BROKER_USER: ${RABBITMQ_USER:?Copy .env.example to .env}
+  BROKER_PASSWORD: ${RABBITMQ_PASSWORD:?Copy .env.example to .env}
+
+x-db-broker-deps: &db-broker-deps
+  postgres:
+    condition: service_healthy
+  rabbitmq:
+    condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: evalvo_admin
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Copy .env.example to .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U evalvo_admin -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Copy .env.example to .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Copy .env.example to .env}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
+  model-service:
+    <<: *app
+    command: ["uvicorn", "main:app", "--app-dir", "services/model-service", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: [*db-env, *broker-env]
+      DB_NAME: model_db
+      DB_USER: model_user
+    depends_on: *db-broker-deps
+
+  file-service:
+    <<: *app
+    command: ["uvicorn", "main:app", "--app-dir", "services/file-service", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *db-env
+      DB_NAME: file_db
+      DB_USER: file_user
+      FILE_STORE_PATH: /data/files
+    volumes:
+      - file-data:/data/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  training-service:
+    <<: *app
+    command: ["uvicorn", "main:app", "--app-dir", "services/training-service", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: [*db-env, *broker-env]
+      DB_NAME: training_db
+      DB_USER: training_user
+    depends_on: *db-broker-deps
+
+  provider-service:
+    <<: *app
+    command: ["uvicorn", "main:app", "--app-dir", "services/provider-service", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: [*db-env, *broker-env]
+      DB_NAME: provider_db
+      DB_USER: provider_user
+    depends_on: *db-broker-deps
+
+  chat-service:
+    <<: *app
+    command: ["uvicorn", "main:app", "--app-dir", "services/chat-service", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: [*db-env, *broker-env]
+      DB_NAME: chat_db
+      DB_USER: chat_user
+    depends_on: *db-broker-deps
+
+  runtime-service:
+    <<: *app
+    command: ["uvicorn", "main:app", "--app-dir", "services/runtime-service", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: [*db-env, *broker-env]
+      DB_NAME: runtime_db
+      DB_USER: runtime_user
+      RUNTIME_STORE_PATH: /data/runtime
+    volumes:
+      - runtime-data:/data/runtime
+    depends_on: *db-broker-deps
+
+  gateway:
+    <<: *app
+    command: ["uvicorn", "main:app", "--app-dir", "services/gateway", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8000}:8000"
+    depends_on:
+      model-service:
+        condition: service_healthy
+      file-service:
+        condition: service_healthy
+      training-service:
+        condition: service_healthy
+      provider-service:
+        condition: service_healthy
+      chat-service:
+        condition: service_healthy
+      runtime-service:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  file-data:
+  runtime-data:
